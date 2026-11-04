@@ -38,6 +38,33 @@ export type Job = {
   voter_count: number;
   files: JobFile[];
 };
+export type CasteOption = { name: string; category: string };
+export type PartyOption = { name: string; leader: string };
+export type VoterFields = {
+  religions: string[];
+  castes: CasteOption[];
+  categories: string[];
+  occupations: string[];
+  farmer_kinds: string[];
+  shop_kinds: string[];
+  ideologies: PartyOption[];
+  leaders: string[];
+  age_bands: string[];
+};
+export type VoterMark = {
+  voter_key: string;
+  religion: string | null;
+  caste: string | null;
+  category: string | null;
+  occupation: string | null;
+  farmer_kinds: string[];
+  farmer_other: string;
+  shop_kinds: string[];
+  shop_other: string;
+  occupation_other: string;
+  ideology: string | null;
+  leader: string | null;
+};
 export type Voter = {
   serial: string;
   epic: string | null;
@@ -50,7 +77,7 @@ export type Voter = {
   assembly_ref: string | null;
   part_no: string | null;
   ward_no?: string | number | null;
-};
+} & VoterMark;
 
 const base = () => {
   const url = import.meta.env.VITE_API_URL;

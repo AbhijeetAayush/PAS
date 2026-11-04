@@ -151,6 +151,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .brand small { color: var(--muted); }
 .stage {
   width: min(100%, 920px);
+  min-width: 0;
   margin: 0 auto;
   padding: 0.4rem 1rem calc(var(--dock) + env(safe-area-inset-bottom) + 1.2rem);
   display: grid;
@@ -467,13 +468,76 @@ button, a { -webkit-tap-highlight-color: transparent; }
   position: sticky;
   top: 0;
   z-index: 2;
+  min-width: 7.5rem;
   background: #f6f1e6;
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  white-space: normal;
+  vertical-align: top;
 }
+.sort-btn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  padding: 0 0 0.35rem;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+}
+.sort-btn[aria-pressed="true"] { color: var(--leaf-2); }
+.col-filter, .cell-select, .note-line {
+  width: 100%;
+  min-height: 2.15rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.25rem 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 550;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.cell-select { max-width: 18rem; }
+.roll-table td.mark { white-space: normal; vertical-align: top; }
+.roll-table th.wide, .roll-table td.wide { min-width: 22rem; }
+.roll-table td.wide .cell-select { max-width: none; }
+.pick-list {
+  display: grid;
+  gap: 0.28rem;
+  max-height: 9.5rem;
+  min-width: 12.5rem;
+  overflow: auto;
+  padding: 0.1rem 0;
+}
+.pick-list label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-start;
+  font-size: 0.82rem;
+  font-weight: 550;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.category { font-weight: 750; letter-spacing: 0.02em; }
+.tool-box {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem 1rem;
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+.tool-box summary { cursor: pointer; font-weight: 750; }
+.tool-grid { display: grid; gap: 0.7rem; margin-top: 0.75rem; }
+.stage:has(.roll-scroll) { width: 100%; }
 .roll-table .pin {
   position: sticky;
   left: 0;
