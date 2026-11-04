@@ -1,0 +1,231 @@
+# From this folder:
+#   sam build
+#   sam deploy --guided
+# The first guided deploy asks for every parameter below, one at a time.
+# Frontend, from ../frontend: copy .env.example to .env, set VITE_API_URL to the ApiUrl output, npm install, npm run dev.
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Voter roll ingest API, worker, and PDF bucket.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Timeout: 29
+    MemorySize: 512
+    Environment:
+      Variables:
+        SUPABASE_URL: !Ref SupabaseUrl
+        SUPABASE_ANON_KEY: !Ref SupabaseAnonKey
+        SUPABASE_JWT_SECRET: !Ref SupabaseJwtSecret
+        SUPABASE_DB_URL: !Ref SupabaseDbUrl
+        UPSTASH_REDIS_REST_URL: !Ref UpstashRedisRestUrl
+        UPSTASH_REDIS_REST_TOKEN: !Ref UpstashRedisRestToken
+        QSTASH_TOKEN: !Ref QStashToken
+        QSTASH_CURRENT_SIGNING_KEY: !Ref QStashCurrentSigningKey
+        QSTASH_NEXT_SIGNING_KEY: !Ref QStashNextSigningKey
+        QSTASH_URL: !Ref QStashUrl
+        VERTEX_MODEL: !Ref VertexModel
+        VERTEX_LOCATION: !Ref VertexLocation
+        GCP_PROJECT_ID: !Ref GcpProjectId
+        BIGQUERY_DATASET: !Ref BigQueryDataset
+        BIGQUERY_LOCATION: !Ref BigQueryLocation
+        GCP_SERVICE_ACCOUNT_SECRET: !Ref GcpServiceAccountSecret
+        PDF_BUCKET: !Ref PdfBucket
+        CORS_ORIGIN: !Ref CorsOrigin
+        LOG_LEVEL: INFO
+
+Parameters:
+  SupabaseUrl:
+    Type: String
+    Description: Supabase project URL, https://YOUR_PROJECT.supabase.co
+  SupabaseAnonKey:
+    Type: String
+    NoEcho: true
+    Description: Supabase anon public key. The API gives this to the React app.
+  SupabaseJwtSecret:
+    Type: String
+    Default: ""
+    Description: Press Enter. Login is verified with the Supabase JWKS.
+  SupabaseDbUrl:
+    Type: String
+    NoEcho: true
+    Description: Supabase database URI, session pooler port 5432. Used to create the job tables.
+  UpstashRedisRestUrl:
+    Type: String
+    Description: Upstash Redis REST URL.
+  UpstashRedisRestToken:
+    Type: String
+    NoEcho: true
+    Description: Upstash Redis REST token.
+  QStashToken:
+    Type: String
+    NoEcho: true
+    Description: Upstash QStash token.
+  QStashCurrentSigningKey:
+    Type: String
+    NoEcho: true
+    Description: Upstash QStash current signing key.
+  QStashNextSigningKey:
+    Type: String
+    NoEcho: true
+    Description: Upstash QStash next signing key.
+  QStashUrl:
+    Type: String
+    Default: https://qstash-us-east-1.upstash.io
+    Description: QStash API for the same region as the token. EU tokens use https://qstash.upstash.io.
+  VertexModel:
+    Type: String
+    Default: gemini-3.5-flash
+    Description: Gemini model id. gemini-2.5-flash retired on 20 Oct 2026.
+  VertexLocation:
+    Type: String
+    Default: global
+    Description: Vertex location. gemini-3.5-flash is served from global.
+  GcpProjectId:
+    Type: String
+    Description: Google Cloud project id for BigQuery and Vertex.
+  BigQueryDataset:
+    Type: String
+    Default: voter_rolls
+    AllowedPattern: "[A-Za-z0-9_]+"
+    Description: BigQuery dataset. Created on the first ingest.
+  BigQueryLocation:
+    Type: String
+    Default: US
+    Description: BigQuery dataset location, for example US or asia-south1.
+  GcpServiceAccountJsonB64:
+    Type: String
+    NoEcho: true
+    Description: Base64 of a Google service account JSON with BigQuery Data Editor and Job User.
+  CorsOrigin:
+    Type: String
+    Default: "http://localhost:5173"
+    Description: One browser origin allowed by API Gateway, or *. Example http://localhost:5173
+
+Resources:
+  PdfBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  GcpServiceAccountSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AWS::StackName}/gcp-service-account
+      SecretString: !Ref GcpServiceAccountJsonB64
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-api
+      RetentionInDays: 14
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-worker
+      RetentionInDays: 14
+
+  HttpApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/apigateway/${AWS::StackName}
+      RetentionInDays: 14
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      AccessLogSettings:
+        DestinationArn: !GetAtt HttpApiLogGroup.Arn
+        Format: "$context.requestId $context.httpMethod $context.path $context.status"
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref CorsOrigin
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - authorization
+          - content-type
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-api
+      CodeUri: src/
+      Handler: handler.handler
+      LoggingConfig:
+        LogGroup: !Ref ApiLogGroup
+        LogFormat: JSON
+      Environment:
+        Variables:
+          WORKER_BASE_URL: !GetAtt WorkerFunctionUrl.FunctionUrl
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref PdfBucket
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref GcpServiceAccountSecret
+      Events:
+        Root:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: ANY
+            Path: /
+        Proxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: ANY
+            Path: /{proxy+}
+
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-worker
+      CodeUri: src/
+      Handler: handler.handler
+      Timeout: 300
+      MemorySize: 2048
+      LoggingConfig:
+        LogGroup: !Ref WorkerLogGroup
+        LogFormat: JSON
+      FunctionUrlConfig:
+        AuthType: NONE
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref PdfBucket
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref GcpServiceAccountSecret
+
+Outputs:
+  ApiUrl:
+    Description: Put this in frontend .env as VITE_API_URL.
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  WorkerUrl:
+    Description: QStash calls this URL. The API already has it.
+    Value: !GetAtt WorkerFunctionUrl.FunctionUrl
+  PdfBucket:
+    Description: Ward PDFs are stored here.
+    Value: !Ref PdfBucket
