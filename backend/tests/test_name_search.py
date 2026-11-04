@@ -32,18 +32,19 @@ class SpellingTest(unittest.TestCase):
 
     def test_hindi_typing_is_not_transliterated(self) -> None:
         clause, params = voter_search("अभि")
-        self.assertIn("lower(name) like @q", clause)
+        self.assertIn("lower(v.name) like @q", clause)
         self.assertEqual(params[0]["parameterValue"]["value"], "%अभि%")
         self.assertEqual(len(params), 2)
-        self.assertIn("name like @h0", clause)
+        self.assertIn("v.name like @h0", clause)
 
     def test_english_search_adds_hindi_likes(self) -> None:
         clause, params = voter_search("abhi")
         values = [item["parameterValue"]["value"] for item in params]
         self.assertIn("%abhi%", values)
         self.assertIn("%अभि%", values)
-        self.assertIn("name like @h0", clause)
-        self.assertIn("epic", clause)
+        self.assertIn("v.name like @h0", clause)
+        self.assertIn("v.epic", clause)
+        self.assertIn("current_date('Asia/Kolkata')", clause)
 
     def test_two_words_must_both_match(self) -> None:
         clause, _params = voter_search("ram singh")

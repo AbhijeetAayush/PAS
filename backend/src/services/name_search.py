@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 
 from adapters.roll_store import string_param
+from services.age import AGE_SQL
 
 _VIRAMA = "्"
 _MAX_FORMS = 16
@@ -97,10 +98,11 @@ def voter_search(needle: str) -> tuple[str, list[dict]]:
     raw = f"%{needle.lower()}%"
     params: list[dict] = [string_param("q", raw)]
     branches = [
-        "lower(name) like @q",
-        "lower(ifnull(epic, '')) like @q",
-        "lower(ifnull(house_no, '')) like @q",
-        "cast(serial as string) like @q",
+        "lower(v.name) like @q",
+        "lower(ifnull(v.epic, '')) like @q",
+        "lower(ifnull(v.house_no, '')) like @q",
+        "cast(v.serial as string) like @q",
+        f"cast({AGE_SQL} as string) like @q",
     ]
     groups: list[list[str]] = []
     for word in re.split(r"\s+", needle.strip().lower()):
@@ -119,7 +121,7 @@ def voter_search(needle: str) -> tuple[str, list[dict]]:
             choices: list[str] = []
             for form in forms:
                 key = f"h{index}"
-                choices.append(f"name like @{key}")
+                choices.append(f"v.name like @{key}")
                 params.append(string_param(key, f"%{form}%"))
                 index += 1
             parts.append("(" + " or ".join(choices) + ")")

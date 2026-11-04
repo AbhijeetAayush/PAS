@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from api.container import Container, get_container
 from api.security import require_user
 from domain.models import AppError
+from services.age import AGE_SQL
 from services.ingest import IngestStart
 from services.name_search import voter_search
 
@@ -172,17 +173,17 @@ def voters(
     start = max(offset, 0)
     from adapters.roll_store import int_param
 
-    table = _table(app, "voters")
+    table = f"{_table(app, 'voters')} v"
     where = """
-        publication = @publication
-        and district = @district
-        and prakhand = @prakhand
-        and body_type = @body_type
-        and body_name = @body_name
+        v.publication = @publication
+        and v.district = @district
+        and v.prakhand = @prakhand
+        and v.body_type = @body_type
+        and v.body_name = @body_name
     """
     params = _place_params(body)
     if ward_no is not None:
-        where += " and ward_no = @ward_no"
+        where += " and v.ward_no = @ward_no"
         params.append(int_param("ward_no", ward_no))
     needle = q.strip().replace("%", "").replace("_", "")[:80]
     if needle:
@@ -193,10 +194,11 @@ def voters(
     total = int(counted[0]["total"]) if counted else 0
     rows = app.rolls.query(
         f"""
-        select serial, epic, name, relation, relation_name, house_no, age, gender, assembly_ref, part_no, ward_no
+        select v.serial, v.epic, v.name, v.relation, v.relation_name, v.house_no, {AGE_SQL} as age,
+               v.gender, v.assembly_ref, v.part_no, v.ward_no
         from {table}
         where {where}
-        order by ward_no, part_no, serial
+        order by v.ward_no, v.part_no, v.serial
         limit @limit offset @offset
         """,
         [*params, int_param("limit", bounded), int_param("offset", start)],
