@@ -97,8 +97,8 @@ def list_jobs(
     authorization: str | None = Header(default=None),
     app: Container = Depends(container),
 ) -> dict:
-    user_id = require_user(app.settings, authorization)
-    return app.jobs.list_jobs(user_id, limit, offset, q, status)
+    require_user(app.settings, authorization)
+    return app.jobs.list_jobs(limit, offset, q, status)
 
 
 @router.get("/jobs/{job_id}")

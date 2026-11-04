@@ -338,11 +338,11 @@ class JobStore:
                 id=job_id,
             )
 
-    def list_jobs(self, user_id: str, limit: int = 15, offset: int = 0, query: str = "", status: str = "") -> dict:
+    def list_jobs(self, limit: int = 15, offset: int = 0, query: str = "", status: str = "") -> dict:
         limit = min(max(int(limit), 1), 40)
         offset = max(int(offset), 0)
-        where = ["user_id = :user_id"]
-        args: dict = {"user_id": user_id}
+        where: list[str] = []
+        args: dict = {}
         text = query.strip()[:80]
         if text:
             where.append("(body_name ilike :q or district_name ilike :q or prakhand_name ilike :q)")
@@ -352,16 +352,14 @@ class JobStore:
         elif status in {"ready", "failed"}:
             where.append("status = :status")
             args["status"] = status
-        clause = " and ".join(where)
+        clause = " and ".join(where) if where else "true"
         with connection(self.db_url) as conn:
             grouped = conn.run(
                 """
                 select status, count(*)
                 from public.ingest_jobs
-                where user_id = :user_id
                 group by status
-                """,
-                user_id=user_id,
+                """
             )
             total_rows = conn.run(f"select count(*) from public.ingest_jobs where {clause}", **args)
             rows = conn.run(

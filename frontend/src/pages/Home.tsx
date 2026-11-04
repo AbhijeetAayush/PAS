@@ -85,7 +85,7 @@ export function HomePage() {
         </div>
         <Link className="ghost" to="/add">Add a roll</Link>
       </div>
-      <p className="muted">Panchayats kept for this account. Search by place as the library grows.</p>
+      <p className="muted">Panchayats already read. Every account sees this library, and a place is started once.</p>
       <label className="field">
         Search the library
         <span className="search">
