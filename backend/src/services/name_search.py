@@ -1,9 +1,10 @@
-"""Match a Roman-typed name to Hindi text already stored on the roll.
+"""Match Roman typing to Hindi text already stored on the roll.
 
 The map is a fixed letter table. A search does not call a model. ABHI becomes
 अभि, so अभिजीत and अभिषेक both match. Each medial "a" is tried as the short
 vowel and as आ, and श/ष, त/ट, द/ड, न/ण are tried the same way, capped so one
-lookup stays a handful of LIKE patterns.
+lookup stays a handful of LIKE patterns. Those spellings are tried on every
+Hindi column, not only the voter name.
 """
 
 from __future__ import annotations
@@ -93,39 +94,53 @@ def spellings(word: str) -> list[str]:
     return _uniq([*fixed, *forms])[:_MAX_FORMS]
 
 
+# Roll columns that can hold Hindi, plus notes typed on a voter.
+_HINDI_COLUMNS = (
+    "v.name",
+    "v.relation",
+    "v.relation_name",
+    "v.gender",
+    "v.house_no",
+    "v.assembly_ref",
+    "m.farmer_other",
+    "m.shop_other",
+    "m.occupation_other",
+)
+
+_RAW_COLUMNS = (
+    "v.name",
+    "v.epic",
+    "v.house_no",
+    "v.relation",
+    "v.relation_name",
+    "v.gender",
+    "v.assembly_ref",
+    "m.religion",
+    "m.caste",
+    "m.category",
+    "m.occupation",
+    "m.farmer_kinds",
+    "m.shop_kinds",
+    "m.farmer_other",
+    "m.shop_other",
+    "m.occupation_other",
+    "m.ideology",
+    "m.leader",
+)
+
+
 def voter_search(needle: str) -> tuple[str, list[dict]]:
     """SQL boolean and BigQuery params. @q is the raw typed text."""
     raw = f"%{needle.lower()}%"
     params: list[dict] = [string_param("q", raw)]
-    branches = [
-        "lower(v.name) like @q",
-        "lower(ifnull(v.epic, '')) like @q",
-        "lower(ifnull(v.house_no, '')) like @q",
-        "cast(v.serial as string) like @q",
-        f"cast({AGE_SQL} as string) like @q",
-    ]
-    groups: list[list[str]] = []
-    for word in re.split(r"\s+", needle.strip().lower()):
-        if re.fullmatch(r"[a-z][a-z.'-]*", word):
-            forms = spellings(word)
-        elif re.search(r"[\u0900-\u097F]", word):
-            forms = [word]
-        else:
-            continue
-        if forms:
-            groups.append(forms)
+    branches = [f"lower(ifnull({column}, '')) like @q" for column in _RAW_COLUMNS]
+    branches.append("cast(v.serial as string) like @q")
+    branches.append("cast(ifnull(v.part_no, 0) as string) like @q")
+    branches.append("cast(ifnull(v.ward_no, 0) as string) like @q")
+    branches.append(f"cast({AGE_SQL} as string) like @q")
+    groups = word_forms(needle)
     if groups:
-        parts: list[str] = []
-        index = 0
-        for forms in groups:
-            choices: list[str] = []
-            for form in forms:
-                key = f"h{index}"
-                choices.append(f"v.name like @{key}")
-                params.append(string_param(key, f"%{form}%"))
-                index += 1
-            parts.append("(" + " or ".join(choices) + ")")
-        branches.append("(" + " and ".join(parts) + ")")
+        branches.append("(" + forms_clause(groups, _HINDI_COLUMNS, params) + ")")
     return " or ".join(branches), params
 
 
