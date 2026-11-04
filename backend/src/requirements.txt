@@ -1,0 +1,13 @@
+fastapi==0.162.0
+mangum==0.22.0
+pydantic==2.14.2
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+httpx==0.28.1
+pypdfium2==4.30.0
+pillow==11.1.0
+PyJWT==2.15.1
+cryptography==46.0.7
+pg8000==1.31.2
+scramp==1.4.9
+boto3==1.36.11

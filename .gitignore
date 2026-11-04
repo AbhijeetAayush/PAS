@@ -1,0 +1,12 @@
+.aws-sam/
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/
+.env
+node_modules/
+dist/
+.DS_Store
+pas-br-*.json
+samconfig.toml
+*.pdf
