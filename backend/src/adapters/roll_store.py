@@ -77,6 +77,19 @@ class RollStore:
                 },
                 allow=(409,),
             )
+        marks = f"`{self.project}.{self.dataset}.voter_marks`"
+        self._post(
+            f"https://bigquery.googleapis.com/bigquery/v2/projects/{self.project}/queries",
+            {
+                "query": (
+                    f"alter table {marks} "
+                    "add column if not exists ideology STRING, "
+                    "add column if not exists leader STRING"
+                ),
+                "useLegacySql": False,
+                "defaultDataset": {"projectId": self.project, "datasetId": self.dataset},
+            },
+        )
         self._ready = True
 
     def insert_voters(self, rows: list[dict]) -> None:
@@ -88,6 +101,36 @@ class RollStore:
     def insert_ward(self, row: dict) -> None:
         self.ensure()
         self._insert("ward_rolls", [row])
+
+    def save_mark(self, mark: dict) -> None:
+        self.ensure()
+        table = f"`{self.project}.{self.dataset}.voter_marks`"
+        fields = (
+            "religion",
+            "caste",
+            "category",
+            "occupation",
+            "farmer_kinds",
+            "farmer_other",
+            "shop_kinds",
+            "shop_other",
+            "occupation_other",
+            "ideology",
+            "leader",
+        )
+        assignments = ", ".join(f"{name} = nullif(@{name}, '')" for name in fields)
+        columns = ", ".join(("voter_key", *fields, "updated_at"))
+        values = ", ".join(("@voter_key", *(f"nullif(@{name}, '')" for name in fields), "current_timestamp()"))
+        self.query(
+            f"""
+            merge {table} t
+            using (select @voter_key as voter_key) s
+            on t.voter_key = s.voter_key
+            when matched then update set {assignments}, updated_at = current_timestamp()
+            when not matched then insert ({columns}) values ({values})
+            """,
+            [string_param("voter_key", mark["voter_key"]), *[string_param(name, mark[name]) for name in fields]],
+        )
 
     def query(self, sql: str, params: list[dict]) -> list[dict]:
         self.ensure()
@@ -185,5 +228,20 @@ _TABLES = {
             {"name": "female_count", "type": "INT64"},
             {"name": "total_count", "type": "INT64"},
         ]
+    ],
+    "voter_marks": [
+        {"name": "voter_key", "type": "STRING", "mode": "REQUIRED"},
+        {"name": "religion", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "caste", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "category", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "occupation", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "farmer_kinds", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "farmer_other", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "shop_kinds", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "shop_other", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "occupation_other", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "ideology", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "leader", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "updated_at", "type": "TIMESTAMP", "mode": "NULLABLE"},
     ],
 }

@@ -129,6 +129,59 @@ def voter_search(needle: str) -> tuple[str, list[dict]]:
     return " or ".join(branches), params
 
 
+def column_search(column: str, needle: str, param: str, kind: str) -> tuple[str, list[dict]]:
+    """One column filter. kind is hindi, text, or number."""
+    cleaned = needle.strip().replace("%", "").replace("_", "")[:80]
+    if not cleaned:
+        return "", []
+    params: list[dict] = [string_param(param, f"%{cleaned.lower()}%")]
+    if kind == "number":
+        base = f"cast({column} as string) like @{param}"
+    else:
+        base = f"lower(ifnull({column}, '')) like @{param}"
+    if kind != "hindi":
+        return base, params
+    groups = word_forms(cleaned)
+    if not groups:
+        return base, params
+    hindi = forms_clause(groups, (column,), params, prefix=f"{param}h")
+    return f"({base} or ({hindi}))", params
+
+
+def word_forms(needle: str) -> list[list[str]]:
+    groups: list[list[str]] = []
+    for word in re.split(r"\s+", needle.strip().lower()):
+        if re.fullmatch(r"[a-z][a-z.'-]*", word):
+            forms = spellings(word)
+        elif re.search(r"[\u0900-\u097F]", word):
+            forms = [word]
+        else:
+            continue
+        if forms:
+            groups.append(forms)
+    return groups
+
+
+def forms_clause(
+    groups: list[list[str]],
+    columns: tuple[str, ...],
+    params: list[dict],
+    prefix: str = "h",
+) -> str:
+    parts: list[str] = []
+    index = 0
+    for forms in groups:
+        choices: list[str] = []
+        for form in forms:
+            key = f"{prefix}{index}"
+            params.append(string_param(key, f"%{form}%"))
+            likes = " or ".join(f"{column} like @{key}" for column in columns)
+            choices.append(f"({likes})")
+            index += 1
+        parts.append("(" + " or ".join(choices) + ")")
+    return " and ".join(parts)
+
+
 def _parse(word: str) -> list[list[str]]:
     groups: list[list[str]] = []
     pending: list[list[str]] = []

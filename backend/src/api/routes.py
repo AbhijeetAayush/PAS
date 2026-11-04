@@ -11,6 +11,16 @@ from domain.models import AppError
 from services.age import AGE_SQL
 from services.ingest import IngestStart
 from services.name_search import voter_search
+from services.voter_marks import (
+    FILTER_KEYS,
+    VOTER_KEY_SQL,
+    clean_mark,
+    extra_where,
+    fields_payload,
+    mark_public,
+    order_clause,
+    present_voter,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -154,14 +164,35 @@ def wards(
     return {"wards": [int(row["ward_no"]) for row in rows if row.get("ward_no") is not None]}
 
 
+@router.get("/voter-fields")
+def voter_fields(authorization: str | None = Header(default=None), app: Container = Depends(container)) -> dict:
+    require_user(app.settings, authorization)
+    return fields_payload()
+
+
+@router.post("/voters/mark")
+def mark_voter(
+    payload: dict,
+    authorization: str | None = Header(default=None),
+    app: Container = Depends(container),
+) -> dict:
+    require_user(app.settings, authorization)
+    mark = clean_mark(payload)
+    app.rolls.save_mark(mark)
+    return mark_public(mark)
+
+
 @router.get("/voters")
 def voters(
     district_id: str,
     prakhand_id: str,
     body_type: str,
     body_id: str,
+    request: Request,
     ward_no: int | None = None,
     q: str = "",
+    sort: str = "",
+    direction: str = "asc",
     limit: int = 24,
     offset: int = 0,
     authorization: str | None = Header(default=None),
@@ -173,7 +204,6 @@ def voters(
     start = max(offset, 0)
     from adapters.roll_store import int_param
 
-    table = f"{_table(app, 'voters')} v"
     where = """
         v.publication = @publication
         and v.district = @district
@@ -190,20 +220,33 @@ def voters(
         clause, extra = voter_search(needle)
         where += f" and ({clause})"
         params.extend(extra)
-    counted = app.rolls.query(f"select count(*) as total from {table} where {where}", params)
+    filters = {key: request.query_params.get(key, "") for key in FILTER_KEYS}
+    filter_sql, filter_params = extra_where(filters)
+    if filter_sql:
+        where += f" and {filter_sql}"
+        params.extend(filter_params)
+    source = f"{_table(app, 'voters')} v left join {_table(app, 'voter_marks')} m on m.voter_key = {VOTER_KEY_SQL}"
+    counted = app.rolls.query(f"select count(*) as total from {source} where {where}", params)
     total = int(counted[0]["total"]) if counted else 0
     rows = app.rolls.query(
         f"""
-        select v.serial, v.epic, v.name, v.relation, v.relation_name, v.house_no, {AGE_SQL} as age,
-               v.gender, v.assembly_ref, v.part_no, v.ward_no
-        from {table}
+        select v.serial, v.epic, v.name, v.relation, v.relation_name, v.house_no, {AGE_SQL} as age, v.gender,
+               v.assembly_ref, v.part_no, v.ward_no, {VOTER_KEY_SQL} as voter_key,
+               m.religion, m.caste, m.category, m.occupation, m.farmer_kinds, m.farmer_other,
+               m.shop_kinds, m.shop_other, m.occupation_other, m.ideology, m.leader
+        from {source}
         where {where}
-        order by v.ward_no, v.part_no, v.serial
+        order by {order_clause(sort, direction)}
         limit @limit offset @offset
         """,
         [*params, int_param("limit", bounded), int_param("offset", start)],
     )
-    return {"body_name": body.body_name, "ward_no": ward_no, "total": total, "voters": rows}
+    return {
+        "body_name": body.body_name,
+        "ward_no": ward_no,
+        "total": total,
+        "voters": [present_voter(row) for row in rows],
+    }
 
 
 def _table(app: Container, name: str) -> str:
