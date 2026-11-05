@@ -226,14 +226,13 @@ def voters(
         where += f" and {filter_sql}"
         params.extend(filter_params)
     source = f"{_table(app, 'voters')} v left join {_table(app, 'voter_marks')} m on m.voter_key = {VOTER_KEY_SQL}"
-    counted = app.rolls.query(f"select count(*) as total from {source} where {where}", params)
-    total = int(counted[0]["total"]) if counted else 0
     rows = app.rolls.query(
         f"""
         select v.serial, v.epic, v.name, v.relation, v.relation_name, v.house_no, {AGE_SQL} as age, v.gender,
                v.assembly_ref, v.part_no, v.ward_no, {VOTER_KEY_SQL} as voter_key,
                m.religion, m.caste, m.category, m.occupation, m.farmer_kinds, m.farmer_other,
-               m.shop_kinds, m.shop_other, m.occupation_other, m.ideology, m.leader
+               m.shop_kinds, m.shop_other, m.occupation_other, m.ideology, m.leader,
+               count(*) over() as match_count
         from {source}
         where {where}
         order by {order_clause(sort, direction)}
@@ -241,6 +240,7 @@ def voters(
         """,
         [*params, int_param("limit", bounded), int_param("offset", start)],
     )
+    total = int(rows[0]["match_count"]) if rows else 0
     return {
         "body_name": body.body_name,
         "ward_no": ward_no,

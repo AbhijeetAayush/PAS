@@ -130,14 +130,20 @@ _RAW_COLUMNS = (
 
 
 def voter_search(needle: str) -> tuple[str, list[dict]]:
-    """SQL boolean and BigQuery params. @q is the raw typed text."""
+    """SQL boolean and BigQuery params. @q is the raw typed text.
+
+    One concatenated LIKE per spelling, not one LIKE per column. The match is
+    the same: the text can sit in any of those columns.
+    """
     raw = f"%{needle.lower()}%"
     params: list[dict] = [string_param("q", raw)]
-    branches = [f"lower(ifnull({column}, '')) like @q" for column in _RAW_COLUMNS]
-    branches.append("cast(v.serial as string) like @q")
-    branches.append("cast(ifnull(v.part_no, 0) as string) like @q")
-    branches.append("cast(ifnull(v.ward_no, 0) as string) like @q")
-    branches.append(f"cast({AGE_SQL} as string) like @q")
+    branches = [
+        f"{_haystack(_RAW_COLUMNS, lower=True)} like @q",
+        "cast(v.serial as string) like @q",
+        "cast(ifnull(v.part_no, 0) as string) like @q",
+        "cast(ifnull(v.ward_no, 0) as string) like @q",
+        f"cast({AGE_SQL} as string) like @q",
+    ]
     groups = word_forms(needle)
     if groups:
         branches.append("(" + forms_clause(groups, _HINDI_COLUMNS, params) + ")")
@@ -183,6 +189,7 @@ def forms_clause(
     params: list[dict],
     prefix: str = "h",
 ) -> str:
+    target = columns[0] if len(columns) == 1 else _haystack(columns, lower=False)
     parts: list[str] = []
     index = 0
     for forms in groups:
@@ -190,11 +197,16 @@ def forms_clause(
         for form in forms:
             key = f"{prefix}{index}"
             params.append(string_param(key, f"%{form}%"))
-            likes = " or ".join(f"{column} like @{key}" for column in columns)
-            choices.append(f"({likes})")
+            choices.append(f"{target} like @{key}")
             index += 1
         parts.append("(" + " or ".join(choices) + ")")
     return " and ".join(parts)
+
+
+def _haystack(columns: tuple[str, ...], lower: bool) -> str:
+    joined = ", ' ', ".join(f"ifnull({column}, '')" for column in columns)
+    expr = f"concat({joined})"
+    return f"lower({expr})" if lower else expr
 
 
 def _parse(word: str) -> list[list[str]]:

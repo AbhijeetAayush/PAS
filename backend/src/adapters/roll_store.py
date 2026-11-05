@@ -134,22 +134,46 @@ class RollStore:
 
     def query(self, sql: str, params: list[dict]) -> list[dict]:
         self.ensure()
-        response = self._post(
+        started = time.time()
+        body = self._post(
             f"https://bigquery.googleapis.com/bigquery/v2/projects/{self.project}/queries",
             {
                 "query": sql,
                 "useLegacySql": False,
                 "parameterMode": "NAMED",
                 "queryParameters": params,
+                "timeoutMs": 8000,
+                "maxResults": 100,
+                "useQueryCache": True,
                 "defaultDataset": {"projectId": self.project, "datasetId": self.dataset},
             },
         )
-        fields = [field["name"] for field in response.get("schema", {}).get("fields", [])]
-        records = []
-        for row in response.get("rows", []):
-            values = [cell.get("v") for cell in row["f"]]
-            records.append(dict(zip(fields, values, strict=True)))
-        return records
+        while body.get("jobComplete") is False and time.time() - started < 22:
+            ref = body.get("jobReference") or {}
+            job_id = ref.get("jobId")
+            if not job_id:
+                raise RuntimeError("BigQuery query did not return rows")
+            time.sleep(0.25)
+            response = httpx.get(
+                "https://bigquery.googleapis.com/bigquery/v2/projects/"
+                f"{ref.get('projectId') or self.project}/queries/{job_id}",
+                params={
+                    "location": ref.get("location") or self.location,
+                    "timeoutMs": "8000",
+                    "maxResults": "100",
+                },
+                headers={"Authorization": f"Bearer {self.auth.token()}"},
+                timeout=30,
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(f"BigQuery {response.status_code}: {response.text[:500]}")
+            body = response.json()
+        if body.get("jobComplete") is False:
+            raise RuntimeError("BigQuery query timed out")
+        error = (body.get("status") or {}).get("errorResult") or {}
+        if error:
+            raise RuntimeError(f"BigQuery query failed: {error.get('message', error)}")
+        return rows_from_query(body)
 
     def _insert(self, table: str, rows: list[dict]) -> None:
         payload_rows = []
@@ -182,6 +206,15 @@ class RollStore:
         if errors:
             raise RuntimeError(f"BigQuery insert failed: {errors[:2]}")
         return body
+
+
+def rows_from_query(body: dict) -> list[dict]:
+    fields = [field["name"] for field in body.get("schema", {}).get("fields", [])]
+    records = []
+    for row in body.get("rows") or []:
+        values = [cell.get("v") for cell in row["f"]]
+        records.append(dict(zip(fields, values, strict=True)))
+    return records
 
 
 def string_param(name: str, value: str) -> dict:
