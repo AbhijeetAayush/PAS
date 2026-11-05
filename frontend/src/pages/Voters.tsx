@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, type Body, type District, type Prakhand, type Voter, type VoterFields, type VoterMark } from "../api";
 import { useAuth } from "../auth";
@@ -100,9 +100,7 @@ export function VotersPage() {
   const [bodyType, setBodyType] = useState(params.get("body_type") || "nagar_panchayat");
   const [bodyId, setBodyId] = useState(params.get("body_id") ?? "");
   const [ward, setWard] = useState(params.get("ward_no") ?? "");
-  const [query, setQuery] = useState("");
   const [needle, setNeedle] = useState("");
-  const [draft, setDraft] = useState<Filters>(EMPTY);
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [sort, setSort] = useState("");
   const [dir, setDir] = useState<"asc" | "desc">("asc");
@@ -164,46 +162,41 @@ export function VotersPage() {
       .catch(() => setWards([]));
   }, [bodyId, bodyType, districtId, prakhandId, token]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setNeedle(query.trim());
-      setPage(0);
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [query]);
-
-  const filtersReady = useRef(false);
-
-  useEffect(() => {
-    if (!filtersReady.current) {
-      filtersReady.current = true;
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      setFilters((current) => (JSON.stringify(current) === JSON.stringify(draft) ? current : draft));
-      setPage(0);
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [draft]);
+  const onSearch = useCallback((value: string) => {
+    setNeedle((current) => (current === value ? current : value));
+    setPage(0);
+  }, []);
 
   useEffect(() => {
     setOpenKey(null);
   }, [bodyId, districtId, needle, prakhandId, ward, filters, sort, dir]);
 
+  const scope = `${districtId}|${prakhandId}|${bodyType}|${bodyId}|${ward}`;
+  const scopeRef = useRef(scope);
+
   useEffect(() => {
     if (!token || !districtId || !prakhandId || !bodyId) {
       busy.current = false;
+      scopeRef.current = scope;
       setVoters([]);
       setTotal(0);
       setBodyName("");
+      setLoading(false);
       return;
     }
+    const moved = scopeRef.current !== scope;
+    scopeRef.current = scope;
     let cancel = false;
+    const controller = new AbortController();
     busy.current = true;
     setLoading(true);
     setError("");
+    if (moved) {
+      setVoters([]);
+      setTotal(0);
+      setBodyName("");
+    }
     const offset = page * PAGE;
-    if (offset === 0) setVoters([]);
     const search = new URLSearchParams({
       district_id: districtId,
       prakhand_id: prakhandId,
@@ -221,15 +214,17 @@ export function VotersPage() {
     for (const [key, value] of Object.entries(filters)) {
       if (value) search.set(key, value);
     }
-    api<{ body_name?: string; total: number; voters: Voter[] }>(`/voters?${search}`, {}, token)
+    api<{ body_name?: string; total: number; voters: Voter[] }>(`/voters?${search}`, { signal: controller.signal }, token)
       .then((payload) => {
         if (cancel) return;
         setBodyName(payload.body_name ?? "");
         setTotal(payload.total);
         setVoters((current) => (offset === 0 ? payload.voters : [...current, ...payload.voters]));
+        if (offset === 0) scroller.current?.scrollTo({ top: 0 });
       })
-      .catch((err: Error) => {
-        if (!cancel) setError(err.message);
+      .catch((err: unknown) => {
+        if (cancel || isAbort(err)) return;
+        setError(err instanceof Error ? err.message : "Could not load voters");
       })
       .finally(() => {
         if (cancel) return;
@@ -238,8 +233,9 @@ export function VotersPage() {
       });
     return () => {
       cancel = true;
+      controller.abort();
     };
-  }, [bodyId, bodyType, dir, districtId, filters, needle, page, prakhandId, sort, token, ward]);
+  }, [bodyId, bodyType, dir, districtId, filters, needle, page, prakhandId, scope, sort, token, ward]);
 
   useEffect(() => {
     const node = sentinel.current;
@@ -270,15 +266,23 @@ export function VotersPage() {
 
   const ready = Boolean(districtId && prakhandId && bodyId);
   const more = voters.length > 0 && voters.length < total;
+  const filtering = Boolean(needle || ward || Object.values(filters).some(Boolean));
+  const emptyCopy = filtering ? "No voters match this search." : "No voters are saved for this selection yet.";
+  const refreshing = loading && voters.length > 0;
 
-  function resetPlace(apply: () => void) {
+  function resetPlace(apply: () => void, keepSearch = false) {
     apply();
     setPage(0);
     setOpenKey(null);
+    if (!keepSearch) {
+      setNeedle("");
+      setFilters(EMPTY);
+    }
   }
 
   function setFilter(key: keyof Filters, value: string) {
-    setDraft((current) => ({ ...current, [key]: value }));
+    setFilters((current) => (current[key] === value ? current : { ...current, [key]: value }));
+    setPage(0);
   }
 
   function toggleSort(id: string) {
@@ -340,6 +344,7 @@ export function VotersPage() {
             {loading && voters.length === 0
               ? " · Looking up voters…"
               : ` · ${count(voters.length)} of ${count(total)}${ward ? ` in ward ${ward}` : ""} · ages as of this year`}
+            {refreshing ? " · Updating…" : ""}
           </p>
         )}
       </div>
@@ -360,22 +365,11 @@ export function VotersPage() {
           <option value="">Select</option>
           {bodies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </Select>
-        <Select label="Ward" value={ward} disabled={!bodyId} onChange={(value) => resetPlace(() => setWard(value))}>
+        <Select label="Ward" value={ward} disabled={!bodyId} onChange={(value) => resetPlace(() => setWard(value), true)}>
           <option value="">All wards</option>
           {wards.map((item) => <option key={item} value={item}>Ward {item}</option>)}
         </Select>
-        <label className="field">
-          Search within this roll
-          <span className="search">
-            <input
-              value={query}
-              disabled={!bodyId}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Any column, Hindi or English"
-            />
-            {query && <button type="button" className="clear" aria-label="Clear search" onClick={() => setQuery("")}>×</button>}
-          </span>
-        </label>
+        <RollSearch key={`${districtId}|${prakhandId}|${bodyType}|${bodyId}`} disabled={!bodyId} onSearch={onSearch} />
       </section>
       {ready && !wide && (
         <details className="tool-box">
@@ -409,10 +403,10 @@ export function VotersPage() {
                 key={column.id}
                 column={column}
                 fields={fields}
-                value={column.id === "ward_no" ? ward : draft[column.id]}
+                value={column.id === "ward_no" ? ward : filters[column.id]}
                 labeled
                 onChange={(value) => {
-                  if (column.id === "ward_no") resetPlace(() => setWard(value.replace(/\D/g, "")));
+                  if (column.id === "ward_no") resetPlace(() => setWard(value.replace(/\D/g, "")), true);
                   else setFilter(column.id, value);
                 }}
               />
@@ -421,9 +415,8 @@ export function VotersPage() {
         </details>
       )}
       {error && <p className="banner">{error}</p>}
-      {ready && !loading && total === 0 && <p className="muted">No voters are saved for this selection yet.</p>}
-      {voters.length > 0 && (wide ? (
-        <div className="roll-scroll" ref={scroller}>
+      {ready && wide && (
+        <div className={refreshing ? "roll-scroll is-refreshing" : "roll-scroll"} ref={scroller} aria-busy={loading}>
           <table className="roll-table">
             <thead>
               <tr>
@@ -436,9 +429,9 @@ export function VotersPage() {
                     <FilterControl
                       column={column}
                       fields={fields}
-                      value={column.id === "ward_no" ? ward : draft[column.id]}
+                      value={column.id === "ward_no" ? ward : filters[column.id]}
                       onChange={(value) => {
-                        if (column.id === "ward_no") resetPlace(() => setWard(value.replace(/\D/g, "")));
+                        if (column.id === "ward_no") resetPlace(() => setWard(value.replace(/\D/g, "")), true);
                         else setFilter(column.id, value);
                       }}
                     />
@@ -458,10 +451,12 @@ export function VotersPage() {
               ))}
             </tbody>
           </table>
-          <div ref={sentinel} className="more">{more && loading ? "Loading more names…" : more ? "Scroll for more" : `${count(total)} names`}</div>
+          {voters.length === 0 && <p className="roll-empty">{loading ? "Looking up voters…" : emptyCopy}</p>}
+          <div ref={sentinel} className="more">{more && loading ? "Loading more names…" : more ? "Scroll for more" : voters.length ? `${count(total)} names` : ""}</div>
         </div>
-      ) : (
-        <div className="people">
+      )}
+      {ready && !wide && voters.length > 0 && (
+        <div className={refreshing ? "people is-refreshing" : "people"}>
           {voters.map((voter, index) => (
             <button key={voter.voter_key || rowKey(voter, index)} type="button" className="person" onClick={() => setOpenKey(voter.voter_key)}>
               <strong>{voter.name}</strong>
@@ -471,7 +466,8 @@ export function VotersPage() {
           ))}
           <div ref={sentinel} className="more">{more && loading ? "Loading more names…" : more ? "Scroll for more" : `${count(total)} names`}</div>
         </div>
-      ))}
+      )}
+      {ready && !wide && voters.length === 0 && <p className="muted">{loading ? "Looking up voters…" : emptyCopy}</p>}
       {open && (
         <div className="sheet-back" onClick={() => setOpenKey(null)}>
           <section
@@ -580,6 +576,43 @@ function MarkFields({
   );
 }
 
+function RollSearch({ disabled, onSearch }: { disabled: boolean; onSearch: (value: string) => void }) {
+  const [query, setQuery] = useState("");
+  const onSearchRef = useRef(onSearch);
+  const skip = useRef(true);
+  onSearchRef.current = onSearch;
+  useEffect(() => {
+    if (skip.current) {
+      skip.current = false;
+      return;
+    }
+    const timer = window.setTimeout(() => onSearchRef.current(query.trim()), 320);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+  return (
+    <label className="field">
+      Search within this roll
+      <span className="search">
+        <input
+          value={query}
+          disabled={disabled}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Any column, Hindi or English"
+        />
+        {query && (
+          <button type="button" className="clear" aria-label="Clear search" onClick={() => setQuery("")}>
+            ×
+          </button>
+        )}
+      </span>
+    </label>
+  );
+}
+
+function isAbort(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
+}
+
 function FilterControl({
   column,
   fields,
@@ -593,6 +626,18 @@ function FilterControl({
   onChange: (value: string) => void;
   labeled?: boolean;
 }) {
+  const text = column.filter === "text";
+  const [local, setLocal] = useState(value);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  useEffect(() => {
+    setLocal(value);
+  }, [value]);
+  useEffect(() => {
+    if (!text || local === value) return;
+    const timer = window.setTimeout(() => onChangeRef.current(local), 280);
+    return () => window.clearTimeout(timer);
+  }, [local, text, value]);
   if (column.filter === "choice") {
     const options = fields && column.options ? column.options(fields) : [];
     const select = (
@@ -608,10 +653,10 @@ function FilterControl({
     <input
       className={labeled ? undefined : "col-filter"}
       aria-label={`Filter ${column.label}`}
-      value={value}
+      value={local}
       placeholder={column.id === "ward_no" ? "Ward" : "Filter"}
       inputMode={column.id === "ward_no" || column.id === "serial" || column.id === "age" || column.id === "part_no" ? "numeric" : "text"}
-      onChange={(event) => onChange(event.target.value)}
+      onChange={(event) => setLocal(event.target.value)}
     />
   );
   if (!labeled) return input;

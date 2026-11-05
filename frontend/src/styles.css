@@ -449,6 +449,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
   background: var(--card);
   box-shadow: var(--shadow);
 }
+.roll-scroll.is-refreshing { box-shadow: inset 0 3px 0 var(--leaf-2), var(--shadow); }
+.roll-empty { margin: 0; padding: 1.2rem 1rem 1.4rem; color: var(--muted); }
+button.cell-select { text-align: left; cursor: pointer; color: inherit; }
+.people.is-refreshing { opacity: 0.72; }
 .roll-table {
   width: max-content;
   min-width: 100%;

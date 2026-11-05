@@ -28,12 +28,30 @@ export function Choice({
   compact?: boolean;
   empty: string;
 }) {
+  const [editing, setEditing] = useState(false);
+  if (compact && !editing) {
+    return (
+      <button
+        type="button"
+        className="cell-select"
+        aria-label={label}
+        disabled={disabled || options.length === 0}
+        onClick={() => setEditing(true)}
+      >
+        {value || empty}
+      </button>
+    );
+  }
   const select = (
     <select
       className={compact ? "cell-select" : undefined}
       aria-label={label}
       value={value ?? ""}
       disabled={disabled || options.length === 0}
+      autoFocus={compact}
+      onBlur={() => {
+        if (compact) window.setTimeout(() => setEditing(false), 150);
+      }}
       onChange={(event) => onChange(event.target.value)}
     >
       <option value="">{empty}</option>
