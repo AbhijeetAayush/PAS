@@ -18,6 +18,7 @@ type Filters = {
   gender: string;
   serial: string;
   part_no: string;
+  booth_no: string;
   religion: string;
   caste: string;
   category: string;
@@ -48,6 +49,7 @@ const EMPTY: Filters = {
   gender: "",
   serial: "",
   part_no: "",
+  booth_no: "",
   religion: "",
   caste: "",
   category: "",
@@ -64,6 +66,7 @@ const EMPTY: Filters = {
 const COLUMNS: Column[] = [
   { id: "name", label: "Name", filter: "text" },
   { id: "ward_no", label: "Ward", filter: "text" },
+  { id: "booth_no", label: "Booth", filter: "text" },
   { id: "serial", label: "Serial", filter: "text" },
   { id: "epic", label: "EPIC", filter: "text" },
   { id: "relation", label: "Relation", filter: "text" },
@@ -672,6 +675,7 @@ function renderCell(
 ): ReactNode {
   if (id === "name") return voter.name;
   if (id === "ward_no") return blank(voter.ward_no);
+  if (id === "booth_no") return blank(voter.booth_no);
   if (id === "serial") return voter.serial;
   if (id === "epic") return blank(voter.epic);
   if (id === "relation") return blank(voter.relation);

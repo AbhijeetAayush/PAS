@@ -77,6 +77,7 @@ export type Voter = {
   assembly_ref: string | null;
   part_no: string | null;
   ward_no?: string | number | null;
+  booth_no?: string | null;
 } & VoterMark;
 
 const base = () => {
