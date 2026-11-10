@@ -10,6 +10,9 @@ import httpx
 from config.sources import SEC_VOTER_ROLL_URL
 from domain.models import AppError, District, Prakhand, RollLink
 
+_GRAM_BOOTHS = "https://sec25.bihar.gov.in/sec_new/Panchayat/PollingBooth"
+_NAGAR_BOOTHS = "https://sec25.bihar.gov.in/sec_new/Nagarpalika/PollingBooth"
+_NAGAR_BODIES = "https://sec25.bihar.gov.in/sec_new/Nagarpalika/Result_NP"
 _DISTRICT_BLOCK = re.compile(
     r'id="ddlDistrict"(.*?)id="ddlBlock"',
     re.S,
@@ -36,6 +39,54 @@ class SecClient:
             {"districtId": district_id, "blockId": prakhand_id},
         )
         return [{"id": str(row["i"]), "name": str(row["n"])} for row in rows]
+
+    def gram_booths(self, district_id: str, block_id: str, panchayat_id: str) -> list[dict]:
+        rows = self._handler_at(
+            _GRAM_BOOTHS,
+            "GetPolling",
+            {"DistrictID": district_id, "BlockID": block_id, "PanchayatID": panchayat_id},
+        )
+        booths = []
+        for row in rows:
+            ward = _int_or_none(row.get("WardNo"))
+            number = str(row.get("BoothNo") or "").strip()
+            if ward is None or not number:
+                continue
+            booths.append({"ward_no": ward, "booth_no": number, "pdf_url": ""})
+        return booths
+
+    def nagar_id(self, district_id: str, body_name: str) -> str | None:
+        rows = self._handler_at(_NAGAR_BODIES, "GetNagarpalika", {"districtId": district_id})
+        wanted = _compact(body_name)
+        matches = [row for row in rows if _compact(str(row.get("n") or "")) == wanted]
+        if len(matches) != 1:
+            return None
+        return str(matches[0]["i"])
+
+    def nagar_booths(self, np_id: str) -> list[dict]:
+        wards = self._handler_at(_NAGAR_BODIES, "GetWardNo", {"NpId": np_id})
+        booths = []
+        for ward in wards:
+            ward_no = _int_or_none(ward.get("i") or ward.get("n"))
+            if ward_no is None:
+                continue
+            rows = self._handler_at(
+                _NAGAR_BOOTHS,
+                "GetPolling",
+                {"NP_ID": np_id, "WardNo": ward_no},
+            )
+            for row in rows:
+                number = str(row.get("PollingStation_No") or "").strip()
+                if not number:
+                    continue
+                booths.append(
+                    {
+                        "ward_no": ward_no,
+                        "booth_no": number,
+                        "pdf_url": str(row.get("Doc") or "").strip(),
+                    }
+                )
+        return booths
 
     def roll_links(self, district_id: str, prakhand_id: str, panchayat_id: str) -> list[RollLink]:
         phases = self._handler(
@@ -87,7 +138,10 @@ class SecClient:
         )
 
     def _handler(self, name: str, params: dict) -> list[dict]:
-        response = self._request("GET", self.base_url, params={"handler": name, **params})
+        return self._handler_at(self.base_url, name, params)
+
+    def _handler_at(self, url: str, name: str, params: dict) -> list[dict]:
+        response = self._request("GET", url, params={"handler": name, **params})
         return _as_rows(response.json() if response.content else [])
 
     def _get_text(self, url: str) -> str:
@@ -167,6 +221,10 @@ def _as_rows(payload: object) -> list[dict]:
     if not isinstance(payload, list):
         raise AppError("Unexpected response from SEC", 502)
     return [row for row in payload if isinstance(row, dict)]
+
+
+def _compact(value: str) -> str:
+    return re.sub(r"[^0-9a-z\u0900-\u097f]", "", value.casefold())
 
 
 def _int_or_none(value: object) -> int | None:

@@ -77,20 +77,24 @@ class RollStore:
                 },
                 allow=(409,),
             )
+        voters = f"`{self.project}.{self.dataset}.voters`"
         marks = f"`{self.project}.{self.dataset}.voter_marks`"
+        self._alter(f"alter table {voters} add column if not exists booth_no STRING")
+        self._alter(
+            f"alter table {marks} add column if not exists ideology STRING, "
+            "add column if not exists leader STRING"
+        )
+        self._ready = True
+
+    def _alter(self, sql: str) -> None:
         self._post(
             f"https://bigquery.googleapis.com/bigquery/v2/projects/{self.project}/queries",
             {
-                "query": (
-                    f"alter table {marks} "
-                    "add column if not exists ideology STRING, "
-                    "add column if not exists leader STRING"
-                ),
+                "query": sql,
                 "useLegacySql": False,
                 "defaultDataset": {"projectId": self.project, "datasetId": self.dataset},
             },
         )
-        self._ready = True
 
     def insert_voters(self, rows: list[dict]) -> None:
         if not rows:
@@ -132,7 +136,79 @@ class RollStore:
             [string_param("voter_key", mark["voter_key"]), *[string_param(name, mark[name]) for name in fields]],
         )
 
+    def assign_booth_ward(self, job: dict, ward_no: int, booth_no: str) -> int:
+        return self.statement(
+            f"""
+            update {self._voters()}
+            set booth_no = @booth_no
+            where publication = @publication
+              and body_type = @body_type
+              and body_name = @body_name
+              and ward_no = @ward_no
+              and (booth_no is null or booth_no != @booth_no)
+            """,
+            self._booth_params(job, ward_no, booth_no),
+        )
+
+    def assign_booth_epics(self, job: dict, ward_no: int, booth_no: str, epics: set[str]) -> int:
+        changed = 0
+        values = sorted(epics)
+        for start in range(0, len(values), 400):
+            batch = values[start : start + 400]
+            changed += self.statement(
+                f"""
+                update {self._voters()}
+                set booth_no = @booth_no
+                where publication = @publication
+                  and body_type = @body_type
+                  and body_name = @body_name
+                  and ward_no = @ward_no
+                  and epic in unnest(@epics)
+                  and (booth_no is null or booth_no != @booth_no)
+                """,
+                [*self._booth_params(job, ward_no, booth_no), string_array_param("epics", batch)],
+            )
+        return changed
+
+    def assign_booth_serials(self, job: dict, ward_no: int, booth_no: str, first: int, last: int) -> int:
+        return self.statement(
+            f"""
+            update {self._voters()}
+            set booth_no = @booth_no
+            where publication = @publication
+              and body_type = @body_type
+              and body_name = @body_name
+              and ward_no = @ward_no
+              and serial between @first and @last
+              and booth_no is null
+            """,
+            [
+                *self._booth_params(job, ward_no, booth_no),
+                int_param("first", first),
+                int_param("last", last),
+            ],
+        )
+
+    def statement(self, sql: str, params: list[dict]) -> int:
+        body = self._run(sql, params, wait_s=45)
+        return int(body.get("numDmlAffectedRows") or 0)
+
     def query(self, sql: str, params: list[dict]) -> list[dict]:
+        return rows_from_query(self._run(sql, params, wait_s=22))
+
+    def _voters(self) -> str:
+        return f"`{self.project}.{self.dataset}.voters`"
+
+    def _booth_params(self, job: dict, ward_no: int, booth_no: str) -> list[dict]:
+        return [
+            string_param("publication", job["publication"]),
+            string_param("body_type", job["body_type"]),
+            string_param("body_name", job["body_name"]),
+            string_param("booth_no", booth_no),
+            int_param("ward_no", ward_no),
+        ]
+
+    def _run(self, sql: str, params: list[dict], wait_s: float) -> dict:
         self.ensure()
         started = time.time()
         body = self._post(
@@ -148,7 +224,7 @@ class RollStore:
                 "defaultDataset": {"projectId": self.project, "datasetId": self.dataset},
             },
         )
-        while body.get("jobComplete") is False and time.time() - started < 22:
+        while body.get("jobComplete") is False and time.time() - started < wait_s:
             ref = body.get("jobReference") or {}
             job_id = ref.get("jobId")
             if not job_id:
@@ -173,7 +249,7 @@ class RollStore:
         error = (body.get("status") or {}).get("errorResult") or {}
         if error:
             raise RuntimeError(f"BigQuery query failed: {error.get('message', error)}")
-        return rows_from_query(body)
+        return body
 
     def _insert(self, table: str, rows: list[dict]) -> None:
         payload_rows = []
@@ -225,6 +301,14 @@ def int_param(name: str, value: int) -> dict:
     return {"name": name, "parameterType": {"type": "INT64"}, "parameterValue": {"value": str(value)}}
 
 
+def string_array_param(name: str, values: list[str]) -> dict:
+    return {
+        "name": name,
+        "parameterType": {"type": "ARRAY", "arrayType": {"type": "STRING"}},
+        "parameterValue": {"arrayValues": [{"value": value} for value in values]},
+    }
+
+
 _PLACE = [
     {"name": "publication", "type": "STRING"},
     {"name": "district", "type": "STRING"},
@@ -249,6 +333,7 @@ _TABLES = {
         {"name": "age", "type": "STRING", "mode": "NULLABLE"},
         {"name": "gender", "type": "STRING", "mode": "NULLABLE"},
         {"name": "assembly_ref", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "booth_no", "type": "STRING", "mode": "NULLABLE"},
         {"name": "source_url", "type": "STRING", "mode": "NULLABLE"},
         {"name": "page_no", "type": "INT64", "mode": "NULLABLE"},
         {"name": "ingested_at", "type": "TIMESTAMP", "mode": "NULLABLE"},
