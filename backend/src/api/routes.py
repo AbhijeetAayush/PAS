@@ -57,8 +57,18 @@ def prakhands(district_id: str, app: Container = Depends(container)) -> dict:
 
 
 @router.get("/catalog/bodies")
-def bodies(district_id: str, prakhand_id: str, body_type: str, app: Container = Depends(container)) -> dict:
+def bodies(
+    district_id: str,
+    prakhand_id: str,
+    body_type: str,
+    authorization: str | None = Header(default=None),
+    app: Container = Depends(container),
+) -> dict:
     rows = app.catalog.bodies(district_id, prakhand_id, body_type)
+    synced: set[str] = set()
+    if authorization:
+        require_user(app.settings, authorization)
+        synced = app.jobs.downloaded_keys([item.key for item in rows])
     return {
         "bodies": [
             {
@@ -66,6 +76,7 @@ def bodies(district_id: str, prakhand_id: str, body_type: str, app: Container = 
                 "name": item.body_name,
                 "body_type": item.body_type,
                 "publication": item.publication,
+                "synced": item.key in synced,
             }
             for item in rows
         ]

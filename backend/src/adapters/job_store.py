@@ -59,6 +59,18 @@ class JobStore:
             )
         return str(rows[0][0]) if rows else None
 
+    def downloaded_keys(self, body_keys: list[str]) -> set[str]:
+        if not body_keys:
+            return set()
+        names = {f"k{index}": key for index, key in enumerate(body_keys)}
+        clause = ", ".join(f":{name}" for name in names)
+        with connection(self.db_url) as conn:
+            rows = conn.run(
+                f"select body_key from public.downloaded_bodies where body_key in ({clause})",
+                **names,
+            )
+        return {str(row[0]) for row in rows}
+
     def open_job(self, body_key: str) -> str | None:
         with connection(self.db_url) as conn:
             rows = conn.run(

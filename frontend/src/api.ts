@@ -1,6 +1,6 @@
 export type District = { id: string; name: string };
 export type Prakhand = { id: string; name: string };
-export type Body = { id: string; name: string; body_type: string; publication: string };
+export type Body = { id: string; name: string; body_type: string; publication: string; synced?: boolean };
 export type IngestResult = { status: string; job_id: string };
 export type JobFile = {
   ward_no: number | null;

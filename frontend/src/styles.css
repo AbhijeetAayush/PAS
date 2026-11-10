@@ -426,6 +426,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
   background: var(--card);
 }
 .option.on { border-color: var(--ink); background: #f7f4ee; }
+.option.synced { cursor: default; background: var(--paper); }
+.option.synced .hindi { filter: blur(0.7px); opacity: 0.62; }
+.option.synced .pill { filter: none; opacity: 1; flex: none; }
+.option.synced:hover { background: var(--paper); }
 .tick { width: 1rem; color: var(--leaf-2); font-weight: 700; }
 .pick-tools { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 .pick-tools .text {

@@ -49,15 +49,15 @@ export function WizardPage() {
     if (!districtId || !prakhandId) return;
     setLoadingBodies(true);
     const query = new URLSearchParams({ district_id: districtId, prakhand_id: prakhandId, body_type: bodyType });
-    api<{ bodies: Body[] }>(`/catalog/bodies?${query}`)
+    api<{ bodies: Body[] }>(`/catalog/bodies?${query}`, {}, token)
       .then((payload) => setBodies(payload.bodies))
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoadingBodies(false));
-  }, [bodyType, districtId, prakhandId]);
+  }, [bodyType, districtId, prakhandId, token]);
 
   const district = districts.find((item) => item.id === districtId);
   const prakhand = prakhands.find((item) => item.id === prakhandId);
-  const chosen = bodies.filter((item) => bodyIds.includes(item.id));
+  const chosen = bodies.filter((item) => bodyIds.includes(item.id) && !item.synced);
   const canNext = [Boolean(districtId), Boolean(prakhandId), true, chosen.length > 0, chosen.length > 0][step];
 
   async function submit() {
@@ -151,7 +151,7 @@ export function WizardPage() {
         <MultiPicker
           label={bodyType === "nagar_panchayat" ? "Search nagar panchayats" : "Search gram panchayats"}
           placeholder="Type a name"
-          options={bodies.map((item) => ({ id: item.id, name: item.name }))}
+          options={bodies.map((item) => ({ id: item.id, name: item.name, synced: item.synced }))}
           values={bodyIds}
           onChange={setBodyIds}
           loading={loadingBodies}
@@ -173,7 +173,7 @@ export function WizardPage() {
               ))}
             </ul>
           )}
-          <p className="muted">Each selected panchayat is read once. Ones already in the library are left as they are, and the rest start together.</p>
+          <p className="muted">Each selected panchayat is read once. A panchayat already synced stays in the library.</p>
           {note && (
             <p className="banner ok">
               {note}{" "}

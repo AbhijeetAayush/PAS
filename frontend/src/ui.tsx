@@ -137,7 +137,7 @@ export function MultiPicker({
 }: {
   label: string;
   placeholder: string;
-  options: { id: string; name: string }[];
+  options: { id: string; name: string; synced?: boolean }[];
   values: string[];
   onChange: (ids: string[]) => void;
   loading?: boolean;
@@ -147,9 +147,12 @@ export function MultiPicker({
   const needle = query.trim().toLowerCase();
   const shown = options.filter((item) => item.name.toLowerCase().includes(needle) || item.name.includes(query.trim()));
   const selected = new Set(values);
-  const allOn = options.length > 0 && options.every((item) => selected.has(item.id));
+  const open = options.filter((item) => !item.synced);
+  const allOn = open.length > 0 && open.every((item) => selected.has(item.id));
 
   function toggle(id: string) {
+    const item = options.find((option) => option.id === id);
+    if (item?.synced) return;
     onChange(selected.has(id) ? values.filter((value) => value !== id) : [...values, id]);
   }
 
@@ -173,7 +176,7 @@ export function MultiPicker({
       </label>
       <div className="pick-tools">
         <span className="meta">{values.length} selected</span>
-        <button type="button" className="text" disabled={loading || options.length === 0} onClick={() => onChange(allOn ? [] : options.map((item) => item.id))}>
+        <button type="button" className="text" disabled={loading || open.length === 0} onClick={() => onChange(allOn ? [] : open.map((item) => item.id))}>
           {allOn ? "Clear" : "Select all"}
         </button>
       </div>
@@ -186,11 +189,13 @@ export function MultiPicker({
             type="button"
             role="option"
             aria-selected={selected.has(item.id)}
-            className={selected.has(item.id) ? "option on" : "option"}
+            aria-disabled={item.synced || undefined}
+            disabled={Boolean(item.synced)}
+            className={item.synced ? "option synced" : selected.has(item.id) ? "option on" : "option"}
             onClick={() => toggle(item.id)}
           >
             <span className="hindi">{item.name}</span>
-            <span className="tick" aria-hidden>{selected.has(item.id) ? "✓" : ""}</span>
+            {item.synced ? <span className="pill ready">Already synced</span> : <span className="tick" aria-hidden>{selected.has(item.id) ? "✓" : ""}</span>}
           </button>
         ))}
       </div>
