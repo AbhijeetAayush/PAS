@@ -134,6 +134,23 @@ class IngestOnceTest(unittest.TestCase):
         self.assertEqual(payload["callback_base"], "https://worker.example")
         self.assertEqual(jobs.created[0]["body_name"], "नगर पंचायत, अकबरनगर")
 
+    def test_several_bodies_queue_only_the_new_ones(self) -> None:
+        catalog = _Catalog()
+        jobs = _Jobs(done="old")
+        jobs.done_for = lambda body_key: "old" if body_key.endswith("|akbarnagar") else None
+        queue = _Queue()
+        service = IngestService(catalog, jobs, queue, "https://worker.example")
+        results = service.start_many(
+            "user",
+            "22",
+            "15",
+            "nagar_panchayat",
+            ["akbarnagar", "sultanganj"],
+        )
+        self.assertEqual([item.status for item in results], ["already_downloaded", "queued"])
+        self.assertEqual(len(queue.messages), 1)
+        self.assertEqual(jobs.created[0]["body_id"], "sultanganj")
+
 
 class _Catalog:
     def get_body(self, district_id: str, prakhand_id: str, body_type: str, body_id: str) -> Body:
@@ -156,6 +173,9 @@ class _Jobs:
         self.created: list[dict] = []
 
     def downloaded_job(self, body_key: str) -> str | None:
+        done_for = getattr(self, "done_for", None)
+        if done_for:
+            return done_for(body_key)
         return self.done
 
     def open_job(self, body_key: str) -> str | None:

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Body, type District, type Prakhand } from "../api";
 import { useAuth } from "../auth";
-import { Picker } from "../ui";
+import { MultiPicker, Picker } from "../ui";
 
 const STEPS = ["District", "Prakhand", "Type", "Panchayat", "Confirm"];
 
@@ -20,7 +20,7 @@ export function WizardPage() {
   const [districtId, setDistrictId] = useState("");
   const [prakhandId, setPrakhandId] = useState("");
   const [bodyType, setBodyType] = useState<"gram_panchayat" | "nagar_panchayat">("nagar_panchayat");
-  const [bodyId, setBodyId] = useState("");
+  const [bodyIds, setBodyIds] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -44,7 +44,7 @@ export function WizardPage() {
   }, [districtId]);
 
   useEffect(() => {
-    setBodyId("");
+    setBodyIds([]);
     setBodies([]);
     if (!districtId || !prakhandId) return;
     setLoadingBodies(true);
@@ -57,15 +57,15 @@ export function WizardPage() {
 
   const district = districts.find((item) => item.id === districtId);
   const prakhand = prakhands.find((item) => item.id === prakhandId);
-  const body = bodies.find((item) => item.id === bodyId);
-  const canNext = [Boolean(districtId), Boolean(prakhandId), true, Boolean(bodyId), Boolean(bodyId)][step];
+  const chosen = bodies.filter((item) => bodyIds.includes(item.id));
+  const canNext = [Boolean(districtId), Boolean(prakhandId), true, chosen.length > 0, chosen.length > 0][step];
 
   async function submit() {
     setBusy(true);
     setError("");
     setNote("");
     try {
-      const result = await api<{ status: string; job_id: string }>(
+      const result = await api<{ results: { status: string; job_id: string }[] }>(
         "/ingest",
         {
           method: "POST",
@@ -73,16 +73,21 @@ export function WizardPage() {
             district_id: districtId,
             prakhand_id: prakhandId,
             body_type: bodyType,
-            body_id: bodyId,
+            body_ids: chosen.map((item) => item.id),
           }),
         },
         token,
       );
-      if (result.status === "already_downloaded") {
-        setNote("This roll is already in the library.");
+      const started = result.results.filter((item) => item.status !== "already_downloaded");
+      if (started.length === 0) {
+        setNote(result.results.length === 1 ? "This roll is already in the library." : "These rolls are already in the library.");
         return;
       }
-      navigate(`/jobs/${result.job_id}`);
+      if (started.length === 1) {
+        navigate(`/jobs/${started[0].job_id}`);
+        return;
+      }
+      navigate("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start");
     } finally {
@@ -94,7 +99,7 @@ export function WizardPage() {
     district_id: districtId,
     prakhand_id: prakhandId,
     body_type: bodyType,
-    body_id: bodyId,
+    body_id: chosen[0]?.id ?? "",
   });
 
   return (
@@ -143,12 +148,12 @@ export function WizardPage() {
         </div>
       )}
       {step === 3 && (
-        <Picker
+        <MultiPicker
           label={bodyType === "nagar_panchayat" ? "Search nagar panchayats" : "Search gram panchayats"}
           placeholder="Type a name"
           options={bodies.map((item) => ({ id: item.id, name: item.name }))}
-          value={bodyId}
-          onChange={setBodyId}
+          values={bodyIds}
+          onChange={setBodyIds}
           loading={loadingBodies}
           empty={districtId && prakhandId ? "None are listed for this prakhand." : "Choose a prakhand first."}
         />
@@ -159,13 +164,20 @@ export function WizardPage() {
             <div><dt>District</dt><dd>{district?.name}</dd></div>
             <div><dt>Prakhand</dt><dd>{prakhand?.name}</dd></div>
             <div><dt>Type</dt><dd>{bodyType === "nagar_panchayat" ? "Nagar panchayat" : "Gram panchayat"}</dd></div>
-            <div><dt>Panchayat</dt><dd>{body?.name}</dd></div>
+            <div><dt>{chosen.length === 1 ? "Panchayat" : "Panchayats"}</dt><dd>{chosen.length === 1 ? chosen[0].name : chosen.length}</dd></div>
           </dl>
-          <p className="muted">A panchayat is read once. Opening it again uses the copy already kept.</p>
+          {chosen.length > 1 && (
+            <ul className="options chosen">
+              {chosen.map((item) => (
+                <li key={item.id} className="option"><span className="hindi">{item.name}</span></li>
+              ))}
+            </ul>
+          )}
+          <p className="muted">Each selected panchayat is read once. Ones already in the library are left as they are, and the rest start together.</p>
           {note && (
             <p className="banner ok">
               {note}{" "}
-              <Link to={`/voters?${votersQuery}`}>Open in Voters</Link>
+              {chosen.length === 1 ? <Link to={`/voters?${votersQuery}`}>Open in Voters</Link> : <Link to="/">Open the library</Link>}
             </p>
           )}
         </section>
@@ -180,8 +192,8 @@ export function WizardPage() {
           </button>
         )}
         {step === 4 && (
-          <button className="primary" type="button" disabled={busy || !bodyId} onClick={submit}>
-            {busy ? "Starting" : "Start reading"}
+          <button className="primary" type="button" disabled={busy || chosen.length === 0} onClick={submit}>
+            {busy ? "Starting" : chosen.length > 1 ? `Start reading ${chosen.length}` : "Start reading"}
           </button>
         )}
       </div>

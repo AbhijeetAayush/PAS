@@ -75,17 +75,46 @@ def bodies(district_id: str, prakhand_id: str, body_type: str, app: Container = 
 @router.post("/ingest")
 def start_ingest(payload: dict, authorization: str | None = Header(default=None), app: Container = Depends(container)) -> dict:
     user_id = require_user(app.settings, authorization)
-    for field in ("district_id", "prakhand_id", "body_type", "body_id"):
+    for field in ("district_id", "prakhand_id", "body_type"):
         if not str(payload.get(field) or "").strip():
             raise AppError(f"{field} is required")
-    result: IngestStart = app.ingest.start(
+    single = "body_ids" not in payload
+    body_ids = _body_ids(payload)
+    results = app.ingest.start_many(
         user_id,
         str(payload["district_id"]),
         str(payload["prakhand_id"]),
         str(payload["body_type"]),
-        str(payload["body_id"]),
+        body_ids,
     )
-    return {"status": result.status, "job_id": result.job_id}
+    if single:
+        result: IngestStart = results[0]
+        return {"status": result.status, "job_id": result.job_id}
+    return {
+        "results": [
+            {"body_id": item.body_id, "status": item.status, "job_id": item.job_id}
+            for item in results
+        ]
+    }
+
+
+def _body_ids(payload: dict) -> list[str]:
+    raw = payload["body_ids"] if "body_ids" in payload else [payload.get("body_id")]
+    if not isinstance(raw, list) or not raw:
+        raise AppError("body_id is required")
+    ids: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            raise AppError("body_id is required")
+        body_id = item.strip()
+        if body_id in seen:
+            continue
+        seen.add(body_id)
+        ids.append(body_id)
+    if not ids:
+        raise AppError("body_id is required")
+    return ids
 
 
 @router.get("/jobs")

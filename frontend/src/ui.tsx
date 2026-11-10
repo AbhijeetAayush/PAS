@@ -126,6 +126,78 @@ export function Picker({
   );
 }
 
+export function MultiPicker({
+  label,
+  placeholder,
+  options,
+  values,
+  onChange,
+  loading,
+  empty,
+}: {
+  label: string;
+  placeholder: string;
+  options: { id: string; name: string }[];
+  values: string[];
+  onChange: (ids: string[]) => void;
+  loading?: boolean;
+  empty?: string;
+}) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const shown = options.filter((item) => item.name.toLowerCase().includes(needle) || item.name.includes(query.trim()));
+  const selected = new Set(values);
+  const allOn = options.length > 0 && options.every((item) => selected.has(item.id));
+
+  function toggle(id: string) {
+    onChange(selected.has(id) ? values.filter((value) => value !== id) : [...values, id]);
+  }
+
+  return (
+    <div className="picker">
+      <label className="field">
+        {label}
+        <span className="search">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={placeholder}
+            autoComplete="off"
+          />
+          {query && (
+            <button type="button" className="clear" onClick={() => setQuery("")} aria-label="Clear search">
+              ×
+            </button>
+          )}
+        </span>
+      </label>
+      <div className="pick-tools">
+        <span className="meta">{values.length} selected</span>
+        <button type="button" className="text" disabled={loading || options.length === 0} onClick={() => onChange(allOn ? [] : options.map((item) => item.id))}>
+          {allOn ? "Clear" : "Select all"}
+        </button>
+      </div>
+      <div className="options" role="listbox" aria-multiselectable="true" aria-label={label}>
+        {loading && <p className="muted">Loading…</p>}
+        {!loading && shown.length === 0 && <p className="muted">{empty || "Nothing matches."}</p>}
+        {shown.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="option"
+            aria-selected={selected.has(item.id)}
+            className={selected.has(item.id) ? "option on" : "option"}
+            onClick={() => toggle(item.id)}
+          >
+            <span className="hindi">{item.name}</span>
+            <span className="tick" aria-hidden>{selected.has(item.id) ? "✓" : ""}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (page: number) => void }) {
   if (pages <= 1) return null;
   const numbers = pageWindow(page, pages);
