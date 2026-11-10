@@ -229,7 +229,7 @@ def voters(
     rows = app.rolls.query(
         f"""
         select v.serial, v.epic, v.name, v.relation, v.relation_name, v.house_no, {AGE_SQL} as age, v.gender,
-               v.assembly_ref, v.part_no, v.ward_no, {VOTER_KEY_SQL} as voter_key,
+               v.assembly_ref, v.part_no, v.ward_no, v.booth_no, {VOTER_KEY_SQL} as voter_key,
                m.religion, m.caste, m.category, m.occupation, m.farmer_kinds, m.farmer_other,
                m.shop_kinds, m.shop_other, m.occupation_other, m.ideology, m.leader,
                count(*) over() as match_count
@@ -272,7 +272,7 @@ worker = APIRouter()
 
 @worker.post("/internal/qstash/{step}")
 async def qstash_step(step: str, request: Request, app: Container = Depends(container)) -> dict:
-    if step not in {"discover", "file", "page"}:
+    if step not in {"discover", "file", "page", "booth"}:
         raise AppError("Unknown worker step", 404)
     raw = await request.body()
     try:
@@ -286,6 +286,8 @@ async def qstash_step(step: str, request: Request, app: Container = Depends(cont
         app.pipeline.discover(message)
     elif step == "file":
         app.pipeline.store_file(message)
-    else:
+    elif step == "page":
         app.pipeline.read_page(message)
+    else:
+        app.pipeline.assign_split_ward(message)
     return {"ok": True}

@@ -16,6 +16,7 @@ from adapters.qstash import QStash, lane_for
 from adapters.redis_client import RedisClient
 from adapters.roll_store import RollStore
 from domain.models import AppError, Body, VoterCard
+from services.booths import load_booths, single_booth_by_ward, wards_with_pdfs
 from services.catalog import Catalog
 
 log = logging.getLogger(__name__)
@@ -149,21 +150,22 @@ class Pipeline:
                         "ingested_at": now,
                     }
                 )
+            booth_no = self._booth_no(job, ward_no)
             self.rolls.insert_voters(
                 [
-                    _voter_row(job, item["source_url"], page_no, ward_no, part_no, card, now)
+                    _voter_row(job, item["source_url"], page_no, ward_no, part_no, card, booth_no, now)
                     for card in reading["voters"]
                 ]
             )
             self.jobs.mark_page(file_id, page_no, "ready", len(reading["voters"]))
             self._finish_file(file_id)
-            self._settle(job["id"])
+            self._settle(job["id"], message.get("callback_base"))
         except Exception as exc:
             detail = exc.message if isinstance(exc, AppError) else str(exc)
             if not _retryable(detail):
                 self.jobs.mark_page(file_id, page_no, "failed", 0, detail[:500])
                 self._finish_file(file_id)
-                self._settle(str(message["job_id"]))
+                self._settle(str(message["job_id"]), message.get("callback_base"))
             raise
         finally:
             self.redis.unlock(lock)
@@ -175,7 +177,7 @@ class Pipeline:
         elif outcome == "failed":
             self.jobs.mark_file_error(file_id, "One or more pages could not be read")
 
-    def _settle(self, job_id: str) -> None:
+    def _settle(self, job_id: str, callback_base: str | None = None) -> None:
         progress = self.jobs.job_progress(job_id)
         if not progress:
             return
@@ -183,6 +185,8 @@ class Pipeline:
         expected = json.loads(progress["job"]["expected_urls"] or "[]")
         if progress["complete"] and progress["voter_count"] > 0:
             self.jobs.mark_downloaded(progress["job"]["body_key"], job_id)
+            if callback_base:
+                self._queue_split_wards(progress["job"], callback_base)
             return
         finished = bool(expected) and len(files) == len(expected) and all(
             item["status"] in {"ready", "failed"} for item in files
@@ -193,6 +197,48 @@ class Pipeline:
             return
         if files:
             self.jobs.set_status(job_id, "reading")
+
+    def assign_split_ward(self, message: dict) -> None:
+        from services.booths import apply_ward_pdfs
+
+        job = self._job(message["job_id"])
+        apply_ward_pdfs(self.rolls, job, int(message["ward_no"]), message["booths"])
+
+    def _booth_no(self, job: dict, ward_no: int | None) -> str | None:
+        if ward_no is None:
+            return None
+        try:
+            booths = self._booth_list(job)
+        except Exception:
+            log.exception("booth list failed for %s", job.get("body_key"))
+            return None
+        return single_booth_by_ward(booths).get(int(ward_no))
+
+    def _booth_list(self, job: dict) -> list[dict]:
+        key = f"booth-list:{job['body_key']}"
+        cached = self.redis.get(key)
+        if cached is not None:
+            return json.loads(cached)
+        rows = load_booths(self.catalog.sec, job)
+        self.redis.set(key, json.dumps(rows), ex=600 if not rows else 7 * 24 * 3600)
+        return rows
+
+    def _queue_split_wards(self, job: dict, callback_base: str) -> None:
+        flag = f"booth-pdfs:{job['id']}"
+        if self.redis.get(flag):
+            return
+        try:
+            groups = wards_with_pdfs(self._booth_list(job))
+            for group in groups:
+                self._publish(
+                    callback_base,
+                    "/internal/qstash/booth",
+                    {"job_id": job["id"], "ward_no": group["ward_no"], "booths": group["booths"]},
+                )
+        except Exception:
+            log.exception("booth queue failed for %s", job.get("id"))
+            return
+        self.redis.set(flag, "1", ex=30 * 24 * 3600)
 
     def _publish(self, base: str, path: str, payload: dict) -> None:
         payload = {**payload, "callback_base": base.rstrip("/")}
@@ -205,8 +251,17 @@ class Pipeline:
         return job
 
 
-def _voter_row(job: dict, source_url: str, page_no: int, ward_no: int | None, part_no: int, card: VoterCard, now: str) -> dict:
-    return {
+def _voter_row(
+    job: dict,
+    source_url: str,
+    page_no: int,
+    ward_no: int | None,
+    part_no: int,
+    card: VoterCard,
+    booth_no: str | None,
+    now: str,
+) -> dict:
+    row = {
         "_insert_id": _id(job["publication"], source_url, page_no, card.serial),
         "publication": job["publication"],
         "district": job["district_name"],
@@ -228,6 +283,9 @@ def _voter_row(job: dict, source_url: str, page_no: int, ward_no: int | None, pa
         "page_no": page_no,
         "ingested_at": now,
     }
+    if booth_no:
+        row["booth_no"] = booth_no
+    return row
 
 
 def _object_key(job: dict, ward_no: int | None, digest: str) -> str:

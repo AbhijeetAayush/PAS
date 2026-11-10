@@ -115,6 +115,7 @@ VOTER_KEY_SQL = (
 SORTS = {
     "name": "v.name",
     "ward_no": "v.ward_no",
+    "booth_no": "v.booth_no",
     "serial": "v.serial",
     "epic": "v.epic",
     "relation": "v.relation",
@@ -145,6 +146,7 @@ _TEXT_FILTERS = {
     "gender": ("v.gender", "hindi"),
     "serial": ("v.serial", "number"),
     "part_no": ("v.part_no", "number"),
+    "booth_no": ("v.booth_no", "text"),
     "farmer_other": ("m.farmer_other", "hindi"),
     "shop_other": ("m.shop_other", "hindi"),
     "occupation_other": ("m.occupation_other", "hindi"),
@@ -263,6 +265,7 @@ def present_voter(row: dict) -> dict:
         "assembly_ref": row.get("assembly_ref"),
         "part_no": row.get("part_no"),
         "ward_no": row.get("ward_no"),
+        "booth_no": row.get("booth_no"),
         **mark,
     }
 
